@@ -27,11 +27,11 @@ public class SuperPing extends JavaPlugin {
         getLogger().info("SuperPing has been disabled.");
     }
 
-    public PingManager getPingManager() {
+    PingManager getPingManager() {
         return pingManager;
     }
 
-    public static SuperPing getInstance() {
+    static SuperPing getInstance() {
         return superPing;
     }
 }

@@ -5,17 +5,17 @@ import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.v1_8_R3.entity.CraftPlayer;
 import org.bukkit.entity.Player;
 
-public class PacketListener {
+class PacketListener {
 
     private static final String HANDLER_NAME = "superping_packet_processor";
 
     private PingManager pingManager;
 
-    public PacketListener(PingManager pingManager) {
+    PacketListener(PingManager pingManager) {
         this.pingManager = pingManager;
     }
 
-    public void add(Player p) {
+    void add(Player p) {
         ChannelDuplexHandler channelDuplexHandler = new ChannelDuplexHandler() {
             @Override
             public void channelRead(ChannelHandlerContext context, Object packet) throws Exception {
@@ -50,7 +50,7 @@ public class PacketListener {
         pipeline.addBefore("packet_handler", HANDLER_NAME, channelDuplexHandler);
     }
 
-    public void removeAll() {
+    void removeAll() {
         for (Player p : Bukkit.getOnlinePlayers()) {
             Channel channel = ((CraftPlayer) p).getHandle().playerConnection.networkManager.channel;
 
