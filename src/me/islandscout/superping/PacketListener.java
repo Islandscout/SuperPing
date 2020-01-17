@@ -57,11 +57,6 @@ public class PacketListener {
             ChannelPipeline pipeline = channel.pipeline();
             if (pipeline.get(HANDLER_NAME) != null)
                 pipeline.remove(HANDLER_NAME);
-            //old. Should probably use this since it might have to do with concurrency safety
-            /*channel.eventLoop().submit(() -> {
-                channel.pipeline().remove("hawk" + p.getName());
-                return null;
-            });*/
         }
     }
 }

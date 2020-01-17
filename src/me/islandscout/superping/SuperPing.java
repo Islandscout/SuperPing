@@ -6,10 +6,12 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 public class SuperPing extends JavaPlugin {
 
+    private static SuperPing superPing;
     private PingManager pingManager;
 
     @Override
     public void onEnable() {
+        superPing = this;
         pingManager = new PingManager(this);
         for(Player p : Bukkit.getOnlinePlayers()) {
             pingManager.getPacketListener().add(p);
@@ -21,10 +23,15 @@ public class SuperPing extends JavaPlugin {
     public void onDisable() {
         pingManager.getPacketListener().removeAll();
         pingManager = null;
+        superPing = null;
         getLogger().info("SuperPing has been disabled.");
     }
 
     public PingManager getPingManager() {
         return pingManager;
+    }
+
+    public static SuperPing getInstance() {
+        return superPing;
     }
 }

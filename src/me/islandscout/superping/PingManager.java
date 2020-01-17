@@ -32,7 +32,6 @@ public class PingManager implements Listener {
     private final Map<UUID, List<Pair<Integer, Long>>> pendingPingsMap;
     private final Map<UUID, Long> lastPacketTimeMap;
     private final Map<UUID, Integer> pingMap;
-    private int schedulerId;
 
     PingManager(SuperPing plugin) {
         this.plugin = plugin;
@@ -45,12 +44,9 @@ public class PingManager implements Listener {
     }
 
     private void beginScheduler() {
-        schedulerId = Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, new Runnable() {
-            @Override
-            public void run() {
-                for(Player p : Bukkit.getOnlinePlayers()) {
-                    sendPing(p);
-                }
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, () -> {
+            for(Player p : Bukkit.getOnlinePlayers()) {
+                sendPing(p);
             }
         }, 0L, 1L);
     }
@@ -84,6 +80,9 @@ public class PingManager implements Listener {
             }
             int id = serializer.e();
 
+            //Do not replace with foreach because it may cause a concurrent mod exception.
+            //The standard for-loop fixes this, and no negative effects will occur even
+            //if a pendingPing entry is added from the main thread while this is looping.
             for (int i = 0; i < pendingPings.size(); i++) {
                 Pair<Integer, Long> pair = pendingPings.get(i);
                 if (pair.getKey() == id) {
