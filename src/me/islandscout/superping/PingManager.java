@@ -103,6 +103,7 @@ public class PingManager implements Listener {
         PacketPlayOutKeepAlive pingPacket = new PacketPlayOutKeepAlive(id);
         ((CraftPlayer)p).getHandle().playerConnection.sendPacket(pingPacket);
 
+        //TODO set timestamp on the netty thread as soon as the packet is being sent; NOT HERE! Could fix the jitters.
         Pair<Integer, Long> pair = new Pair<>(id, System.nanoTime());
         pendingPings.add(pair);
         pendingPingsMap.put(uuid, pendingPings);
