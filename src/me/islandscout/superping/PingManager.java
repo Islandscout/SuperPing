@@ -47,6 +47,7 @@ public class PingManager implements Listener {
         Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, () -> {
             for(Player p : Bukkit.getOnlinePlayers()) {
                 sendPing(p);
+                Bukkit.broadcastMessage(getPing(p) + "ms");
             }
         }, 0L, 1L);
     }
@@ -82,8 +83,9 @@ public class PingManager implements Listener {
 
             //Do not replace with foreach because it may cause a concurrent mod exception.
             //The standard for-loop fixes this, and no negative effects will occur even
-            //if a pendingPing entry is added from the main thread while this is looping.
-            for (int i = 0; i < pendingPings.size(); i++) {
+            //if a pendingPing entry is added from the main thread while this is looping,
+            //since elements are only added to this on the other thread.
+            for (int i = 0, size = pendingPings.size(); i < size; i++) {
                 Pair<Integer, Long> pair = pendingPings.get(i);
                 if (pair.getKey() == id) {
                     pair.setValue(System.nanoTime());
@@ -94,30 +96,7 @@ public class PingManager implements Listener {
     }
 
     private void computeKeepAlivePing(int id, long currTime, Player p) {
-        UUID uuid = p.getUniqueId();
-        List<Pair<Integer, Long>> pendingPings = pendingPingsMap.get(uuid);
-        if(pendingPings == null) {
-            return;
-        }
-
-        List<Pair<Integer, Long>> replace = new ArrayList<>();
-        boolean foundResponse = false;
-        int ping = 0;
-        for (int i = 0; i < pendingPings.size(); i++) {
-            Pair<Integer, Long> pair = pendingPings.get(i);
-            if (foundResponse) {
-                replace.add(pair);
-            } else if (pair.getKey() == id) {
-                ping = (int) ((currTime - pair.getValue()) / 1000000);
-                foundResponse = true;
-                if(i != 0) { //client made goof-up and is out of order
-                    p.kickPlayer("Invalid ping response");
-                }
-            }
-        }
-
-        pendingPingsMap.put(uuid, replace);
-        pingMap.put(uuid, ping);
+        handlePing(p, true, id, currTime);
     }
 
     private void accumulateOthers(long currTime, Player p) {
@@ -129,20 +108,54 @@ public class PingManager implements Listener {
     }
 
     private void sendPing(Player p) {
-        UUID uuid = p.getUniqueId();
-        List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new ArrayList<>());
+        handlePing(p, false, -1, -1);
+    }
 
-        if(pendingPings.size() >= TIMEOUT_TICKS) {
-            p.kickPlayer("Timed out");
+    private synchronized void handlePing(Player p, boolean inbound, int id, long currTime) {
+        UUID uuid = p.getUniqueId();
+
+        if(inbound) {
+            List<Pair<Integer, Long>> pendingPings = pendingPingsMap.get(uuid);
+            if(pendingPings == null) {
+                return;
+            }
+
+            List<Pair<Integer, Long>> replace = new ArrayList<>();
+            boolean foundResponse = false;
+            int ping = 0;
+            for (int i = 0; i < pendingPings.size(); i++) {
+                Pair<Integer, Long> pair = pendingPings.get(i);
+                if (foundResponse) {
+                    replace.add(pair);
+                } else if (pair.getKey() == id) {
+                    ping = (int) ((currTime - pair.getValue()) / 1000000);
+                    foundResponse = true;
+                    if(i != 0) { //client made goof-up and is out of order
+                        kickPlayer(p, "Invalid ping response");
+                    }
+                }
+            }
+            if(foundResponse) {
+                pendingPingsMap.put(uuid, replace);
+                pingMap.put(uuid, ping);
+            }
         }
 
-        int id = (int)((System.nanoTime() / 1000000L) + (OFFSET_SECONDS * 1000));
-        Pair<Integer, Long> pair = new Pair<>(id, 0L); //set to 0 for now
-        pendingPings.add(pair);
-        pendingPingsMap.put(uuid, pendingPings);
+        else {
+            List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new ArrayList<>());
 
-        PacketPlayOutKeepAlive pingPacket = new PacketPlayOutKeepAlive(id);
-        ((CraftPlayer)p).getHandle().playerConnection.sendPacket(pingPacket);
+            if(pendingPings.size() >= TIMEOUT_TICKS) {
+                kickPlayer(p, "Timed out");
+            }
+
+            id = (int)((System.nanoTime() / 1000000L) + (OFFSET_SECONDS * 1000));
+            Pair<Integer, Long> pair = new Pair<>(id, 0L); //set to 0 for now
+            pendingPings.add(pair);
+            pendingPingsMap.put(uuid, pendingPings);
+
+            PacketPlayOutKeepAlive pingPacket = new PacketPlayOutKeepAlive(id);
+            ((CraftPlayer)p).getHandle().playerConnection.sendPacket(pingPacket);
+        }
     }
 
     int getPing(Player p) {
@@ -164,5 +177,10 @@ public class PingManager implements Listener {
 
     PacketListener getPacketListener() {
         return pListener;
+    }
+
+    private void kickPlayer(Player p, String msg) {
+        pListener.remove(p);
+        Bukkit.getScheduler().scheduleSyncDelayedTask(plugin, () -> p.kickPlayer(msg));
     }
 }

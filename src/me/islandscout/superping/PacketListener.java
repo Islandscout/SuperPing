@@ -50,6 +50,16 @@ class PacketListener {
         pipeline.addBefore("packet_handler", HANDLER_NAME, channelDuplexHandler);
     }
 
+    void remove(Player p) {
+        Channel channel = ((CraftPlayer) p).getHandle().playerConnection.networkManager.channel;
+
+        ChannelPipeline pipeline = channel.pipeline();
+        if (pipeline.get(HANDLER_NAME) != null)
+            channel.eventLoop().submit(() -> {
+                pipeline.remove(HANDLER_NAME);
+            });
+    }
+
     void removeAll() {
         for (Player p : Bukkit.getOnlinePlayers()) {
             Channel channel = ((CraftPlayer) p).getHandle().playerConnection.networkManager.channel;
