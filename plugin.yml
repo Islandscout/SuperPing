@@ -1,0 +1,5 @@
+name: SuperPing
+main: me.islandscout.superping.SuperPing
+version: beta1.0
+author: Islandscout
+description: Get continuous ping of player
