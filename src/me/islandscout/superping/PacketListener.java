@@ -28,6 +28,18 @@ public class PacketListener {
 
                 super.channelRead(context, packet);
             }
+
+            @Override
+            public void write(ChannelHandlerContext context, Object packet, ChannelPromise promise) throws Exception {
+
+                try {
+                    pingManager.packetOut(packet, p);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                super.write(context, packet, promise);
+            }
         };
         ChannelPipeline pipeline;
         pipeline = ((CraftPlayer) p).getHandle().playerConnection.networkManager.channel.pipeline();

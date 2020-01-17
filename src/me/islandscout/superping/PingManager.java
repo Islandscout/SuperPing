@@ -1,5 +1,7 @@
 package me.islandscout.superping;
 
+import io.netty.buffer.Unpooled;
+import net.minecraft.server.v1_8_R3.PacketDataSerializer;
 import net.minecraft.server.v1_8_R3.PacketPlayInKeepAlive;
 import net.minecraft.server.v1_8_R3.PacketPlayOutKeepAlive;
 import org.bukkit.Bukkit;
@@ -10,6 +12,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -30,7 +33,7 @@ public class PingManager implements Listener {
     private final Map<UUID, Integer> pingMap;
     private int schedulerId;
 
-    public PingManager(SuperPing plugin) {
+    PingManager(SuperPing plugin) {
         this.plugin = plugin;
         this.pListener = new PacketListener(this);
         this.pendingPingsMap = new ConcurrentHashMap<>();
@@ -51,7 +54,7 @@ public class PingManager implements Listener {
         }, 0L, 1L);
     }
 
-    public void packetIn(Object packet, Player p) {
+    void packetIn(Object packet, Player p) {
         long currTime = System.nanoTime();
         if(packet instanceof PacketPlayInKeepAlive) {
             computeKeepAlivePing(((PacketPlayInKeepAlive) packet).a(), currTime, p);
@@ -60,6 +63,34 @@ public class PingManager implements Listener {
             accumulateOthers(currTime, p);
         }
         lastPacketTimeMap.put(p.getUniqueId(), currTime);
+    }
+
+    void packetOut(Object packet, Player p) {
+        if(packet instanceof PacketPlayOutKeepAlive) {
+
+            UUID uuid = p.getUniqueId();
+            List<Pair<Integer, Long>> pendingPings = pendingPingsMap.get(uuid);
+            if(pendingPings == null) {
+                return;
+            }
+
+            PacketDataSerializer serializer = new PacketDataSerializer(Unpooled.buffer());
+            try {
+                ((PacketPlayOutKeepAlive) packet).b(serializer);
+            }
+            catch (IOException e) {
+                e.printStackTrace();
+            }
+            int id = serializer.e();
+
+            for (int i = 0; i < pendingPings.size(); i++) {
+                Pair<Integer, Long> pair = pendingPings.get(i);
+                if (pair.getKey() == id) {
+                    pair.setValue(System.nanoTime());
+                    break;
+                }
+            }
+        }
     }
 
     private void computeKeepAlivePing(int id, long currTime, Player p) {
@@ -72,13 +103,12 @@ public class PingManager implements Listener {
         List<Pair<Integer, Long>> replace = new ArrayList<>();
         boolean foundResponse = false;
         int ping = 0;
-        //TODO concurrency issues? main thread accesses map too!
         for (int i = 0; i < pendingPings.size(); i++) {
             Pair<Integer, Long> pair = pendingPings.get(i);
             if (foundResponse) {
                 replace.add(pair);
             } else if (pair.getKey() == id) {
-                ping = (int) (currTime - pair.getValue()) / 1000000;
+                ping = (int) ((currTime - pair.getValue()) / 1000000);
                 foundResponse = true;
             }
         }
@@ -91,7 +121,7 @@ public class PingManager implements Listener {
         UUID uuid = p.getUniqueId();
         int ping = getPing(p);
         long lastPacketTime = lastPacketTimeMap.getOrDefault(uuid, currTime);
-        int add = (int) Math.max(0, currTime - lastPacketTime - 50000000) / 1000000;
+        int add = (int) (Math.max(0, currTime - lastPacketTime - 50000000) / 1000000);
         pingMap.put(uuid, ping + add);
     }
 
@@ -100,16 +130,15 @@ public class PingManager implements Listener {
         List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new ArrayList<>());
 
         int id = (int)((System.nanoTime() / 1000000L) + (OFFSET_SECONDS * 1000));
-        PacketPlayOutKeepAlive pingPacket = new PacketPlayOutKeepAlive(id);
-        ((CraftPlayer)p).getHandle().playerConnection.sendPacket(pingPacket);
-
-        //TODO set timestamp on the netty thread as soon as the packet is being sent; NOT HERE! Could fix the jitters.
-        Pair<Integer, Long> pair = new Pair<>(id, System.nanoTime());
+        Pair<Integer, Long> pair = new Pair<>(id, 0L); //set to 0 for now
         pendingPings.add(pair);
         pendingPingsMap.put(uuid, pendingPings);
+
+        PacketPlayOutKeepAlive pingPacket = new PacketPlayOutKeepAlive(id);
+        ((CraftPlayer)p).getHandle().playerConnection.sendPacket(pingPacket);
     }
 
-    public int getPing(Player p) {
+    int getPing(Player p) {
         return pingMap.getOrDefault(p.getUniqueId(), 0);
     }
 
@@ -118,7 +147,7 @@ public class PingManager implements Listener {
         pListener.add(e.getPlayer());
     }
 
-    public PacketListener getPacketListener() {
+    PacketListener getPacketListener() {
         return pListener;
     }
 }
