@@ -98,12 +98,16 @@ public class PingManager implements Listener {
 
     private void computeKeepAlivePing(int id, long currTime, Player p) {
         handlePing(p, true, id, currTime);
-        lastKeepaliveTimeMap.put(p.getUniqueId(), currTime);
     }
 
     private void accumulateOthers(long currTime, Player p) {
         UUID uuid = p.getUniqueId();
         int ping = getPing(p);
+
+        //In case the client sent no keepalives
+        if(!lastKeepaliveTimeMap.containsKey(uuid)) {
+            lastKeepaliveTimeMap.put(uuid, currTime);
+        }
 
         //Pretend that every packet is a dot in a time-line. However, keepalives
         //are also 50ms-long line segments that extend forward in that time-line.
@@ -111,7 +115,7 @@ public class PingManager implements Listener {
         //to another dot or line segment. We take that distance and add it to the
         //ping.
         //vars: currTime, lastPacketTime, lastKeepaliveTimeEnd
-        long lastKeepaliveTimeEnd = lastKeepaliveTimeMap.getOrDefault(uuid, currTime) + 50000000;
+        long lastKeepaliveTimeEnd = lastKeepaliveTimeMap.get(uuid) + 50000000;
         long lastPacketTime = lastPacketTimeMap.getOrDefault(uuid, currTime);
 
         long distanceToOther = currTime - lastPacketTime;
@@ -143,6 +147,7 @@ public class PingManager implements Listener {
                 } else if (pair.getKey() == id) {
                     ping = (int) ((currTime - pair.getValue()) / 1000000);
                     foundResponse = true;
+                    lastKeepaliveTimeMap.put(p.getUniqueId(), currTime);
                     if(i != 0) { //client made goof-up and is out of order
                         kickPlayer(p, "Invalid ping response");
                     }
