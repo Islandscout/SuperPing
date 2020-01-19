@@ -31,6 +31,7 @@ public class PingManager implements Listener {
     private final PacketListener pListener;
     private final Map<UUID, List<Pair<Integer, Long>>> pendingPingsMap;
     private final Map<UUID, Long> lastPacketTimeMap;
+    private final Map<UUID, Long> lastKeepaliveTimeMap;
     private final Map<UUID, Integer> pingMap;
 
     PingManager(SuperPing plugin) {
@@ -38,6 +39,7 @@ public class PingManager implements Listener {
         this.pListener = new PacketListener(this);
         this.pendingPingsMap = new ConcurrentHashMap<>();
         this.lastPacketTimeMap = new ConcurrentHashMap<>();
+        this.lastKeepaliveTimeMap = new ConcurrentHashMap<>();
         this.pingMap = new ConcurrentHashMap<>();
         this.beginScheduler();
         Bukkit.getPluginManager().registerEvents(this, plugin);
@@ -47,7 +49,6 @@ public class PingManager implements Listener {
         Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, () -> {
             for(Player p : Bukkit.getOnlinePlayers()) {
                 sendPing(p);
-                Bukkit.broadcastMessage(getPing(p) + "ms");
             }
         }, 0L, 1L);
     }
@@ -97,14 +98,26 @@ public class PingManager implements Listener {
 
     private void computeKeepAlivePing(int id, long currTime, Player p) {
         handlePing(p, true, id, currTime);
+        lastKeepaliveTimeMap.put(p.getUniqueId(), currTime);
     }
 
     private void accumulateOthers(long currTime, Player p) {
         UUID uuid = p.getUniqueId();
         int ping = getPing(p);
+
+        //Pretend that every packet is a dot in a time-line. However, keepalives
+        //are also 50ms-long line segments that extend forward in that time-line.
+        //What we want to do is take the latest dot and find the closest distance
+        //to another dot or line segment. We take that distance and add it to the
+        //ping.
+        //vars: currTime, lastPacketTime, lastKeepaliveTimeEnd
+        long lastKeepaliveTimeEnd = lastKeepaliveTimeMap.getOrDefault(uuid, currTime) + 50000000;
         long lastPacketTime = lastPacketTimeMap.getOrDefault(uuid, currTime);
-        int add = (int) (Math.max(0, currTime - lastPacketTime - 50000000) / 1000000);
-        pingMap.put(uuid, ping + add);
+
+        long distanceToOther = currTime - lastPacketTime;
+        long distanceToKeepaliveEnd = Math.max(0, currTime - lastKeepaliveTimeEnd);
+        int distance = (int)(Math.min(distanceToOther, distanceToKeepaliveEnd) / 1000000);
+        pingMap.put(uuid, ping + distance);
     }
 
     private void sendPing(Player p) {
@@ -172,6 +185,7 @@ public class PingManager implements Listener {
         UUID uuid = e.getPlayer().getUniqueId();
         pendingPingsMap.remove(uuid);
         lastPacketTimeMap.remove(uuid);
+        lastKeepaliveTimeMap.remove(uuid);
         pingMap.remove(uuid);
     }
 
