@@ -2,6 +2,7 @@ package me.islandscout.superping;
 
 import io.netty.buffer.Unpooled;
 import net.minecraft.server.v1_8_R3.PacketDataSerializer;
+import net.minecraft.server.v1_8_R3.PacketPlayInFlying;
 import net.minecraft.server.v1_8_R3.PacketPlayInKeepAlive;
 import net.minecraft.server.v1_8_R3.PacketPlayOutKeepAlive;
 import org.bukkit.Bukkit;
@@ -30,17 +31,15 @@ public class PingManager implements Listener {
     private final SuperPing plugin;
     private final PacketListener pListener;
     private final Map<UUID, List<Pair<Integer, Long>>> pendingPingsMap;
-    private final Map<UUID, Long> lastPacketTimeMap;
     private final Map<UUID, Long> lastKeepaliveTimeMap;
-    private final Map<UUID, Integer> pingMap;
+    private final Map<UUID, List<Pair<Integer, Long>>> respondedPingsMap; //last responses since 50ms ago
 
     PingManager(SuperPing plugin) {
         this.plugin = plugin;
         this.pListener = new PacketListener(this);
         this.pendingPingsMap = new ConcurrentHashMap<>();
-        this.lastPacketTimeMap = new ConcurrentHashMap<>();
         this.lastKeepaliveTimeMap = new ConcurrentHashMap<>();
-        this.pingMap = new ConcurrentHashMap<>();
+        this.respondedPingsMap = new ConcurrentHashMap<>();
         this.beginScheduler();
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
@@ -58,10 +57,9 @@ public class PingManager implements Listener {
         if(packet instanceof PacketPlayInKeepAlive) {
             computeKeepAlivePing(((PacketPlayInKeepAlive) packet).a(), currTime, p);
         }
-        else {
-            accumulateOthers(currTime, p);
+        else if(packet instanceof PacketPlayInFlying){
+            handleFlyings(p);
         }
-        lastPacketTimeMap.put(p.getUniqueId(), currTime);
     }
 
     private void sendPing(Player p) {
@@ -86,32 +84,28 @@ public class PingManager implements Listener {
         handlePing(p, HandleType.READ, id, currTime);
     }
 
-    private void accumulateOthers(long currTime, Player p) {
+    //Flyings are assumed to be received in 50ms intervals. If there is a choke release in the client -> server direction,
+    //then most of the time, there should be 1 keepalive response between each flying during the packet burst.
+    //In the case of a choke release in the server -> client direction, we want to ensure that the burst of keepalives
+    //are accounted for. Because the client does not tick keepalives, but instead replies instantly, the ping variable in
+    //SuperPing will drop too soon, giving an inaccurate representation of the ping for the next client tick. The getPing
+    //method in here will get the highest ping value from the packet burst, but this handleFlyings method is necessary to
+    //filter out client -> server packet bursts.
+    private void handleFlyings(Player p) {
+        long currTimeMillis = System.currentTimeMillis();
         UUID uuid = p.getUniqueId();
-        int ping = getPing(p);
+        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
 
-        //In case the client sent no keepalives
-        if(!lastKeepaliveTimeMap.containsKey(uuid)) {
-            lastKeepaliveTimeMap.put(uuid, currTime);
+        //Size must be at least 2. We don't want to end up clearing all of them if multiple flyings manage to get received between keepalives
+        //The pair value returns the retrieval timestamp, NOT the ping nor send timestamp.
+        if(respondedPings.size() > 1 && currTimeMillis - respondedPings.get(0).getValue() > 50) {
+            respondedPings.remove(0);
         }
 
-        //Pretend that every packet is a dot in a time-line. However, keepalives
-        //are also 50ms-long line segments that extend forward in that time-line.
-        //What we want to do is take the latest dot and find the closest distance
-        //to another dot or line segment. We take that distance and add it to the
-        //ping.
-        //vars: currTime, lastPacketTime, lastKeepaliveTimeEnd
-        long lastKeepaliveTimeEnd = lastKeepaliveTimeMap.get(uuid) + 50000000;
-        long lastPacketTime = lastPacketTimeMap.getOrDefault(uuid, currTime);
-
-        long distanceToOther = currTime - lastPacketTime;
-        long distanceToKeepaliveEnd = Math.max(0, currTime - lastKeepaliveTimeEnd);
-        int distance = (int)(Math.min(distanceToOther, distanceToKeepaliveEnd) / 1000000);
-        pingMap.put(uuid, ping + distance);
+        respondedPingsMap.put(uuid, respondedPings);
     }
 
-
-
+    //I want all three handle situations in here so that they cannot run concurrently
     private synchronized void handlePing(Player p, HandleType type, int id, long currTime) {
         UUID uuid = p.getUniqueId();
 
@@ -123,7 +117,9 @@ public class PingManager implements Listener {
                     return;
                 }
 
-                List<Pair<Integer, Long>> replace = new ArrayList<>();
+                long currTimeMillis = System.currentTimeMillis();
+
+                List<Pair<Integer, Long>> replace = new ArrayList<>(); //replaces the arraylist in the pendingpings map with pings not yet responded
                 boolean foundResponse = false;
                 int ping = 0;
                 for (int i = 0; i < pendingPings.size(); i++) {
@@ -133,7 +129,6 @@ public class PingManager implements Listener {
                     } else if (pair.getKey() == id) {
                         ping = (int) ((currTime - pair.getValue()) / 1000000);
                         foundResponse = true;
-                        lastKeepaliveTimeMap.put(p.getUniqueId(), currTime);
                         if (i != 0) { //client made goof-up and is out of order
                             kickPlayer(p, "Invalid ping response");
                         }
@@ -141,7 +136,18 @@ public class PingManager implements Listener {
                 }
                 if (foundResponse) {
                     pendingPingsMap.put(uuid, replace);
-                    pingMap.put(uuid, ping);
+                    lastKeepaliveTimeMap.put(p.getUniqueId(), currTimeMillis);
+
+                    List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
+                    Pair<Integer, Long> respondedPing = new Pair<>(ping, currTimeMillis);
+
+                    //remove old entries
+                    while(respondedPings.size() > 0 && currTimeMillis - respondedPings.get(0).getValue() > 50) {
+                        respondedPings.remove(0);
+                    }
+
+                    respondedPings.add(respondedPing);
+                    respondedPingsMap.put(uuid, respondedPings);
                 }
                 break;
             }
@@ -162,7 +168,7 @@ public class PingManager implements Listener {
                 break;
             }
 
-            //amin thread
+            //main thread
             case PREPARE: {
                 List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new ArrayList<>());
 
@@ -183,7 +189,21 @@ public class PingManager implements Listener {
     }
 
     int getPing(Player p) {
-        return pingMap.getOrDefault(p.getUniqueId(), 0);
+        UUID uuid = p.getUniqueId();
+        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
+
+        int highest = 0;
+        //get highest ping from the list (if there are multiple, then it is due to a choke release in the server -> client direction)
+        for(Pair<Integer, Long> respondedPing : respondedPings) {
+            if(respondedPing.getKey() > highest)
+                highest = respondedPing.getKey();
+        }
+
+        int ping = highest;
+        long lastKeepaliveTime = lastKeepaliveTimeMap.getOrDefault(uuid, 0L) + 50;
+        int choke = (int) Math.max(0, System.currentTimeMillis() - lastKeepaliveTime);
+
+        return ping + choke;
     }
 
     @EventHandler
@@ -195,9 +215,8 @@ public class PingManager implements Listener {
     public void onQuit(PlayerQuitEvent e) {
         UUID uuid = e.getPlayer().getUniqueId();
         pendingPingsMap.remove(uuid);
-        lastPacketTimeMap.remove(uuid);
         lastKeepaliveTimeMap.remove(uuid);
-        pingMap.remove(uuid);
+        respondedPingsMap.remove(uuid);
     }
 
     PacketListener getPacketListener() {
