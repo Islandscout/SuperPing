@@ -12,10 +12,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.util.Vector;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class PingManager implements Listener {
 
@@ -94,11 +96,11 @@ public class PingManager implements Listener {
     private void handleFlyings(Player p) {
         long currTimeMillis = System.currentTimeMillis();
         UUID uuid = p.getUniqueId();
-        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
+        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new CopyOnWriteArrayList<>());
 
         //Size must be at least 2. We don't want to end up clearing all of them if multiple flyings manage to get received between keepalives
         //The pair value returns the retrieval timestamp, NOT the ping nor send timestamp.
-        if(respondedPings.size() > 1 && currTimeMillis - respondedPings.get(0).getValue() > 50) {
+        if(respondedPings.size() > 1 && currTimeMillis - respondedPings.get(0).getValue() < 50) { //TODO is this less than or greater than 50?
             respondedPings.remove(0);
         }
 
@@ -119,7 +121,7 @@ public class PingManager implements Listener {
 
                 long currTimeMillis = System.currentTimeMillis();
 
-                List<Pair<Integer, Long>> replace = new ArrayList<>(); //replaces the arraylist in the pendingpings map with pings not yet responded
+                List<Pair<Integer, Long>> replace = new CopyOnWriteArrayList<>(); //replaces the arraylist in the pendingpings map with pings not yet responded
                 boolean foundResponse = false;
                 int ping = 0;
                 for (int i = 0; i < pendingPings.size(); i++) {
@@ -138,7 +140,7 @@ public class PingManager implements Listener {
                     pendingPingsMap.put(uuid, replace);
                     lastKeepaliveTimeMap.put(p.getUniqueId(), currTimeMillis);
 
-                    List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
+                    List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new CopyOnWriteArrayList<>());
                     Pair<Integer, Long> respondedPing = new Pair<>(ping, currTimeMillis);
 
                     //remove old entries
@@ -170,7 +172,7 @@ public class PingManager implements Listener {
 
             //main thread
             case PREPARE: {
-                List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new ArrayList<>());
+                List<Pair<Integer, Long>> pendingPings = pendingPingsMap.getOrDefault(uuid, new CopyOnWriteArrayList<>());
 
                 if(pendingPings.size() >= TIMEOUT_TICKS) {
                     kickPlayer(p, "Timed out");
@@ -190,7 +192,7 @@ public class PingManager implements Listener {
 
     int getPing(Player p) {
         UUID uuid = p.getUniqueId();
-        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new ArrayList<>());
+        List<Pair<Integer, Long>> respondedPings = respondedPingsMap.getOrDefault(uuid, new CopyOnWriteArrayList<>());
 
         int highest = 0;
         //get highest ping from the list (if there are multiple, then it is due to a choke release in the server -> client direction)
