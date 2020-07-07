@@ -200,8 +200,9 @@ public class PingManager implements Listener {
         }
 
         int ping = highest;
-        long lastKeepaliveTime = lastKeepaliveTimeMap.getOrDefault(uuid, 0L) + 50;
-        int choke = (int) Math.max(0, System.currentTimeMillis() - lastKeepaliveTime);
+        long currTimeMillis = System.currentTimeMillis();
+        long lastKeepaliveTime = lastKeepaliveTimeMap.getOrDefault(uuid, currTimeMillis) + 50;
+        int choke = (int) Math.max(0, currTimeMillis - lastKeepaliveTime);
 
         return ping + choke;
     }
